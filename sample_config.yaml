@@ -1,0 +1,30 @@
+printer:
+  vendor_id: "0x04b8" # Example Vendor ID (hexadecimal string)
+  product_id: "0x0202" # Example Product ID (hexadecimal string)
+  max_width: 576      # Maximum printer width in pixels
+
+fonts:
+  custom_font_path: "./MerchantCopy.ttf" # Path to your custom font file
+  font_size: 18       # Font size for the PDF
+
+pdf_style:
+  margin_left: 2      # Left margin in millimeters (mm)
+  margin_right: 2     # Right margin in millimeters (mm)
+  margin_top: 2       # Top margin in millimeters (mm)
+  line_height_ratio: 0.9 # Line height ratio
+  paragraph_spacing: 6 # Spacing between paragraphs/categories in millimeters (mm)
+  ingredient_indent: 5 # Indentation for ingredient lines in millimeters (mm)
+
+safety_margins:
+  percentage: 0.20    # Dynamic safety margin as a percentage of total height
+  minimum: 20         # Minimum safety margin in millimeters (mm)
+
+page_dimensions:
+  width: 80           # Page width in millimeters (mm)
+
+mealie:
+  api_url: "http://mealie.url"           # URL of your Mealie API instance
+  api_token: "my_mealie_api_key"         # Mealie API token for authentication
+
+openai:
+  api_key: "my_openai_api_key"
