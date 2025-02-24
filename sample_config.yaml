@@ -17,7 +17,7 @@ pdf_style:
   line_height_ratio: 0.9 # Line height ratio
   paragraph_spacing: 6 # Spacing between paragraphs/categories in millimeters (mm)
   ingredient_indent: 5 # Indentation for ingredient lines in millimeters (mm)
-  padding: 5          # Top/bottom margins for drink label line seperaters.
+  padding: 5          # Top/bottom margins for drink label line separators.
 
 
 safety_margins:
