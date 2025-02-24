@@ -1,10 +1,13 @@
+#Print Apps Config
 printer:
   vendor_id: "0x04b8" # Example Vendor ID (hexadecimal string)
   product_id: "0x0202" # Example Product ID (hexadecimal string)
   max_width: 576      # Maximum printer width in pixels
 
 fonts:
-  custom_font_path: "./MerchantCopy.ttf" # Path to your custom font file
+  custom_font_path_shopping: "./MerchantCopy.ttf" # Path to your custom font file
+  custom_font_path_drink: "./Roboto-Medium.ttf" # Path to your custom font file
+
   font_size: 18       # Font size for the PDF
 
 pdf_style:
@@ -14,6 +17,8 @@ pdf_style:
   line_height_ratio: 0.9 # Line height ratio
   paragraph_spacing: 6 # Spacing between paragraphs/categories in millimeters (mm)
   ingredient_indent: 5 # Indentation for ingredient lines in millimeters (mm)
+  padding: 5          # Top/bottom margins for drink label line seperaters.
+
 
 safety_margins:
   percentage: 0.20    # Dynamic safety margin as a percentage of total height
@@ -23,8 +28,20 @@ page_dimensions:
   width: 80           # Page width in millimeters (mm)
 
 mealie:
-  api_url: "http://mealie.url"           # URL of your Mealie API instance
-  api_token: "my_mealie_api_key"         # Mealie API token for authentication
+  api_url: "http://MEALIE_URL" # URL of your Mealie API instance
+  api_token: "MEALIE_API_TOKEN"         # Mealie API token for authentication
 
 openai:
-  api_key: "my_openai_api_key"
+  api_key: "OPEN_AI_API_TOKEN"
+
+#Flask App Config
+flask:
+  host: "0.0.0.0"
+  port: 5000
+
+paths:
+  script: "/path/to/printing/script"
+  venv_python: "/path/to/venv"
+
+payload:
+  expected: "print shopping list"
