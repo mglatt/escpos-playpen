@@ -57,7 +57,7 @@ def validate_config(cfg: dict):
     if not isinstance(cfg, dict):
         raise ValueError("Configuration must be a dictionary.")
     _validate_section(cfg, 'printer', ['vendor_id', 'product_id', 'max_width'])
-    _validate_section(cfg, 'fonts', ['custom_font_path', 'font_size'])
+    _validate_section(cfg, 'fonts', ['custom_font_path_shopping', 'font_size'])
     _validate_section(cfg, 'pdf_style', [
         'margin_left', 'margin_right', 'margin_top',
         'line_height_ratio', 'paragraph_spacing', 'ingredient_indent'
@@ -339,7 +339,7 @@ if __name__ == "__main__":
         MAX_WIDTH = int(config['printer']['max_width'])
 
         # Fonts Configuration
-        CUSTOM_FONT_PATH = config['fonts']['custom_font_path']
+        CUSTOM_FONT_PATH = config['fonts']['custom_font_path_shopping']
         PDF_FONT_SIZE = int(config['fonts']['font_size'])
 
         # Register the custom font
