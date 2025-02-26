@@ -231,6 +231,28 @@ def fetch_shopping_list_from_mealie(api_url: str, api_token: str):
         return None
 
 
+def filter_unchecked_items(shopping_list: dict) -> list:
+    """
+    Filter the shopping list to only include unchecked items.
+    
+    Args:
+        shopping_list (dict): The complete shopping list from Mealie API
+        
+    Returns:
+        list: List of unchecked shopping items
+    """
+    if not shopping_list or 'items' not in shopping_list:
+        logger.error("Invalid shopping list format or empty shopping list")
+        return []
+        
+    # Filter only unchecked items
+    # In Mealie, the checked status is determined by the 'checked' field
+    unchecked_items = [item for item in shopping_list['items'] if not item.get('checked', False)]
+    
+    logger.info(f"Filtered {len(unchecked_items)} unchecked items from {len(shopping_list['items'])} total items")
+    return unchecked_items
+
+
 def categorize_shopping_list_with_openai(shopping_list: list, openai_api_key: str) -> dict:
     """
     Categorizes the shopping list by grocery store category using OpenAI's chat.completions.create API.
@@ -373,13 +395,21 @@ if __name__ == "__main__":
         OPENAI_API_KEY = config['openai']['api_key']
 
         # Fetch Shopping List from Mealie
-        shopping_list = fetch_shopping_list_from_mealie(MEALIE_API_URL, MEALIE_API_TOKEN)
-        if not shopping_list:
+        shopping_list_data = fetch_shopping_list_from_mealie(MEALIE_API_URL, MEALIE_API_TOKEN)
+        if not shopping_list_data:
             logger.error("Failed to fetch shopping list from Mealie.")
             exit(1)
+            
+        # Filter for unchecked items only
+        unchecked_items = filter_unchecked_items(shopping_list_data)
+        
+        if not unchecked_items:
+            logger.info("No unchecked items in the shopping list. Nothing to print.")
+            exit(0)
 
-        raw_items = [item.get('note', item.get('display', '')) for item in shopping_list['items']]
-        logger.debug(f"Raw items extracted: {raw_items}")
+        # Extract notes/display text from unchecked items only
+        raw_items = [item.get('note', item.get('display', '')) for item in unchecked_items]
+        logger.debug(f"Raw unchecked items extracted: {raw_items}")
 
         # Categorize Shopping List with OpenAI
         categorized_list = categorize_shopping_list_with_openai(raw_items, OPENAI_API_KEY)
