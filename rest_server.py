@@ -9,8 +9,9 @@ with open("config.yaml", "r") as config_file:
     config = yaml.safe_load(config_file)
 
 # Configuration
-SHOPPING_SCRIPT_PATH = config["paths"]["shopping_script"]  # Path to the Python script to execute
-DRINK_SCRIPT_PATH = config["paths"]["drink_script"]  # Path to the Python script to execute
+SHOPPING_SCRIPT_PATH = config["paths"]["shopping_script"]  # Path to the shopping list script
+DRINK_SCRIPT_PATH = config["paths"]["drink_script"]  # Path to the drink label script
+PANTRY_SCRIPT_PATH = config["paths"]["pantry_script"]  # Path to the pantry label script
 
 VENV_PYTHON_PATH = config["paths"]["venv_python"]  # Path to the Python executable in the virtual environment
 EXPECTED_PAYLOAD = config["payload"]["expected"]  # Expected payload value
@@ -51,6 +52,64 @@ def process_drink_order():
 
         # Run the script using the virtual environment's Python interpreter
         result = subprocess.run([VENV_PYTHON_PATH, DRINK_SCRIPT_PATH, order_json_str], capture_output=True, text=True)
+
+        # Return the script output
+        return jsonify({
+            "success": True,
+            "output": result.stdout,
+            "error": result.stderr
+        }), 200
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+# Pantry label endpoint
+@app.route('/process-pantry-label', methods=['POST'])
+def process_pantry_label():
+    try:
+        # Get the JSON payload from the POST request
+        label_json = request.json
+
+        # Validate the payload
+        if not label_json:
+            return jsonify({
+                "success": False,
+                "error": "No JSON payload provided."
+            }), 400
+
+        # Check if required fields are present
+        if 'description' not in label_json:
+            return jsonify({
+                "success": False,
+                "error": "Missing required field 'description' in payload."
+            }), 400
+
+        if 'date' not in label_json:
+            return jsonify({
+                "success": False,
+                "error": "Missing required field 'date' in payload."
+            }), 400
+
+        # Ensure the script and virtual environment paths exist
+        if not os.path.exists(PANTRY_SCRIPT_PATH):
+            return jsonify({
+                "success": False,
+                "error": f"Script not found at '{PANTRY_SCRIPT_PATH}'."
+            }), 404
+
+        if not os.path.exists(VENV_PYTHON_PATH):
+            return jsonify({
+                "success": False,
+                "error": f"Virtual environment Python not found at '{VENV_PYTHON_PATH}'."
+            }), 404
+
+        # Convert the JSON payload to a string
+        label_json_str = json.dumps(label_json)
+
+        # Run the script using the virtual environment's Python interpreter
+        result = subprocess.run([VENV_PYTHON_PATH, PANTRY_SCRIPT_PATH, label_json_str], capture_output=True, text=True)
 
         # Return the script output
         return jsonify({
