@@ -3,3 +3,5 @@ rest_server.log
 MerchantCopy.ttf
 Roboto-Medium.ttf
 Roboto-Bold.ttf
+drink_images/**
+image.py

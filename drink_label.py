@@ -8,6 +8,7 @@ import usb.util
 import usb.core
 import time
 from datetime import datetime
+from PIL import Image
 
 # --- Constants ---
 CONFIG_FILE_PATH = 'config.yaml'
@@ -82,8 +83,85 @@ def get_printer_for_script(script_name: str, config: dict):
     logger.error(f"No printer configured for script: {script_name}")
     return None
 
+def print_image_simple(image_file: str, config: dict):
+    """Print image using the exact same method as the working simple script."""
+    try:
+        # Get printer settings - use exact same approach as simple script
+        vendor_id = int(config['printers']['shared']['vendor_id'], 16)
+        product_id = int(config['printers']['shared']['product_id'], 16)
+        printer_config = get_printer_for_script('drinks', config)
+        serial_number = printer_config['serial_number']
+        profile = printer_config['profile']
+        
+        # Initialize printer - exact same way as simple script
+        usb_args = {'custom_match': getPrinterWithSerial(serial_number)}
+        printer = Usb(vendor_id, product_id, usb_args, profile=profile)
+        
+        # Set center alignment for image
+        printer._raw(b'\x1ba\x01')  # Center align
+        time.sleep(0.1)
+        
+        # Load and print image - exact same way as simple script
+        img = Image.open(image_file)
+        printer.image(img)
+        
+        # Don't cut - let the text portion handle the cut
+        # printer.cut()  # Removed this line
+        
+        # Close connection - exact same way as simple script
+        printer.close()
+        
+        logger.info(f"Image {image_file} printed successfully (centered, no cut)")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Simple image print failed: {e}")
+        return False
+
+def find_customer_image(customer_name: str) -> str:
+    """Look for customer's image in drink_images folder in the same directory as the script."""
+    try:
+        # Get the script directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        logger.info(f"Script directory: {script_dir}")
+        
+        # Look for drink_images folder in the same directory as the script
+        drink_images_dir = os.path.join(script_dir, 'drink_images')
+        logger.info(f"Looking for drink_images directory at: {drink_images_dir}")
+        
+        # Check if drink_images directory exists
+        if not os.path.exists(drink_images_dir):
+            logger.warning(f"drink_images directory does not exist: {drink_images_dir}")
+            return None
+        
+        # Clean up customer name for filename (remove spaces, convert to lowercase)
+        clean_name = customer_name.lower().replace(' ', '').replace("'", "")
+        logger.info(f"Cleaned customer name: '{customer_name}' -> '{clean_name}'")
+        
+        # Look for the image file
+        image_file = os.path.join(drink_images_dir, f"{clean_name}.bmp")
+        logger.info(f"Looking for image file: {image_file}")
+        
+        if os.path.exists(image_file):
+            logger.info(f"Found customer image: {image_file}")
+            return image_file
+        else:
+            logger.info(f"No image found for customer '{customer_name}' (looked for: {image_file})")
+            
+            # List what files are actually in the directory for debugging
+            try:
+                files_in_dir = os.listdir(drink_images_dir)
+                logger.info(f"Files in drink_images directory: {files_in_dir}")
+            except:
+                logger.warning("Could not list files in drink_images directory")
+            
+            return None
+            
+    except Exception as e:
+        logger.warning(f"Error looking for customer image: {e}")
+        return None
 def print_stylized_drink_label(printer: Usb, order: dict):
-    """Prints a visually appealing drink label using only text and ESC/POS commands."""
+    """Prints a visually appealing drink label (text only) with center alignment."""
     if not printer:
         logger.warning("Printer not initialized, cannot print")
         return
@@ -96,17 +174,19 @@ def print_stylized_drink_label(printer: Usb, order: dict):
         printer._raw(b'\x1dB\x00')  # Turn off inverted
         printer._raw(b'\x1bE\x00')  # Turn off bold
         printer._raw(b'\x1b-\x00')  # Turn off underline
+        printer._raw(b'\x1ba\x01')  # Center align
         time.sleep(0.2)
         
-        # Top decorative header with coffee theme
-        printer.set(width=1, height=1, align='left')
-        printer.text('    * * *  DRINK ORDER  * * *\n')
+        # Add whitespace padding after image
+        printer.text('\n\n\n')  # Three lines of spacing
+        
+        # Top decorative header with coffee theme - centered
+        printer.text('* * *  DRINK ORDER  * * *\n')
         printer.text('▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n')
         printer.text('\n')
         
         # Customer name - use inverted + double both with timing for TM-L90 compatibility
         customer_name = order.get('customer_name', 'Customer')
-        printer.text('    ')  # Indentation
         
         # Add delay for TM-L90 compatibility
         time.sleep(0.1)
@@ -121,54 +201,54 @@ def print_stylized_drink_label(printer: Usb, order: dict):
         printer._raw(b'\x1dB\x00')  # Inverted off
         printer.text('\n\n')
         
-        # Decorative separator with dots
-        printer.text('. . . . . . . . . . . . . . . .\n\n')
+        # Decorative separator with dots - centered
+        printer.text('• • • • • • • • • • • • • • • •\n\n')
         
-        # Date and time formatting (normal size)
+        # Date and time formatting (normal size) - centered
         try:
             date_obj = datetime.strptime(order['date_time'], "%B %d %Y %I:%M %p")
             date_str = date_obj.strftime("%b %d, %Y")
             time_str = date_obj.strftime("%I:%M %p")
             
-            date_time_line = f"{date_str:<16} {time_str:>15}"
-            printer.text(date_time_line + '\n')
+            printer.text(f"{date_str}\n")
+            printer.text(f"{time_str}\n")
         except Exception as e:
             logger.warning(f"Date formatting error: {e}")
             printer.text("Date/Time error\n")
         
-        # Double line separator
+        # Double line separator - centered
         printer.text('\n')
-        printer.text('═' * 32 + '\n')
-        printer.text('═' * 32 + '\n')
+        printer.text('═══════════════════════════════\n')
+        printer.text('═══════════════════════════════\n')
         printer.text('\n')
         
-        # Drink name - use direct ESC/POS for double width
+        # Drink name - use direct ESC/POS for double width - centered
         drink_name = order.get('drink_name', 'Drink')
-        printer.text('    ')  # Indentation
         printer._raw(b'\x1b!\x20')  # ESC ! 32 (double width only)
         printer.text(drink_name)
         printer._raw(b'\x1b!\x00')  # ESC ! 0 (reset to normal)
         printer.text('\n\n')
         
-        # Modifiers with basic bullet points
+        # Modifiers - centered
         if 'modifiers' in order and order['modifiers']:
             for modifier in order['modifiers']:
-                mod_text = modifier[:28]  # Truncate if too long
-                printer.text(f'    + {mod_text}\n')
+                mod_text = modifier[:30]  # Truncate if too long
+                printer.text(f'+ {mod_text}\n')
         
-        # Simple bottom line
+        # Simple bottom line - centered
         printer.text('\n')
         printer.text('▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n')
         
         # IMPORTANT: Final cleanup and proper cut (for TM-L90)
         printer._raw(b'\x1b!\x00')  # Reset font/size
         printer._raw(b'\x1dB\x00')  # Turn off inverted
+        printer._raw(b'\x1ba\x00')  # Reset to left align
         time.sleep(0.3)  # Wait before cutting
         printer.text('\n\n')  # Extra spacing
         printer.cut()
         time.sleep(0.3)  # Wait after cutting
         
-        logger.info("Stylized text drink label printed successfully")
+        logger.info("Stylized centered drink label printed successfully")
         
     except Exception as e:
         logger.error(f"Error printing stylized label: {e}")
@@ -181,11 +261,35 @@ def print_stylized_drink_label(printer: Usb, order: dict):
         printer.cut()
 
 def process_drink_order(order_json: str, config: dict):
-    """Processes a drink order using stylized text formatting."""
+    """Processes a drink order using stylized text formatting with automatic customer image lookup."""
     try:
+        logger.info("TESTING - process_drink_order function called")
+        
         # Parse the JSON payload
         order = json.loads(order_json)
+        customer_name = order.get('customer_name', 'Customer')
 
+        logger.info(f"Processing drink order for {customer_name}")
+
+        # Automatically look for customer's image
+        logger.info("Looking for customer image...")
+        customer_image = find_customer_image(customer_name)
+
+        # Print image first if found (using exact simple script method)
+        if customer_image:
+            logger.info(f"Printing customer image: {customer_image}")
+            image_success = print_image_simple(customer_image, config)
+            if image_success:
+                logger.info("Customer image printed successfully, waiting before text...")
+                time.sleep(2)  # Give printer time to reset
+            else:
+                logger.warning("Customer image printing failed, continuing with text only")
+        else:
+            logger.info("No customer image found, printing text only")
+
+        # Print text portion
+        logger.info("Printing drink label text...")
+        
         # Get printer configuration for drinks script
         vendor_id = int(config['printers']['shared']['vendor_id'], 16)
         product_id = int(config['printers']['shared']['product_id'], 16)
@@ -195,9 +299,9 @@ def process_drink_order(order_json: str, config: dict):
             logger.error("No printer configured for drinks script")
             return
         
-        logger.info(f"Using {printer_config['name']} for drinks (Serial: {printer_config['serial_number']})")
+        logger.info(f"Using {printer_config['name']} for text (Serial: {printer_config['serial_number']})")
 
-        # Initialize the printer
+        # Initialize the printer for text
         printer = initialize_printer_by_serial(
             vendor_id, 
             product_id, 
@@ -208,9 +312,11 @@ def process_drink_order(order_json: str, config: dict):
         if printer:
             print_stylized_drink_label(printer, order)
             printer.close()
-            logger.info("Print job completed successfully")
+            logger.info("Text portion completed successfully")
         else:
-            logger.error(f"Failed to initialize printer")
+            logger.error(f"Failed to initialize printer for text")
+
+        logger.info("Complete drink order processing finished")
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON payload: {e}")
@@ -224,9 +330,11 @@ if __name__ == "__main__":
 
         if len(sys.argv) < 2:
             logger.error("Usage: python drink_label.py '{\"customer_name\": \"Chessie\", \"date_time\": \"July 06 2025 12:40 PM\", \"drink_name\": \"Large Coffee\", \"modifiers\": [\"Extra Shot\", \"Oat Milk\"]}'")
+            logger.info("Customer images will be automatically loaded from ../drink_images/customername.bmp")
             exit(1)
 
         order_json = sys.argv[1]
+        
         process_drink_order(order_json, config)
 
     except FileNotFoundError as e:
