@@ -1,0 +1,46 @@
+#Print App Config
+printers:
+  shared:
+    vendor_id: "0x04b8" # Shared Vendor ID (hexadecimal string)
+    product_id: "0x0202" # Shared Product ID (hexadecimal string)
+    max_width: 576      # Maximum printer width in pixels
+  
+  sticky_paper:
+    serial_number: "FIRST_PRINTER_SERIAL" # Serial number for "sticky paper" printer
+    name: "Sticky Paper Printer"
+    profile: "TM-L90"  # Profile for sticky paper printer
+    scripts: ["drinks", "pantry"]  # Scripts that use "sticky paper" printer for labels
+    
+  receipt_paper:
+    serial_number: "SECOND_PRINTER_SERIAL" # Serial number for "receipt paper" printer  
+    name: "Receipt Paper Printer"
+    profile: "TM-T88V"    # Profile for receipt paper printer
+    scripts: ["shopping", "tasks"]  # Scripts that use "receipt paper" printer for lists/tasks
+
+safety_margins:
+  percentage: 0.20    # Dynamic safety margin as a percentage of total height
+  minimum: 20         # Minimum safety margin in millimeters (mm)
+
+page_dimensions:
+  width: 80           # Page width in millimeters (mm)
+
+mealie:
+  api_url: "http://MEALIE_URL" # URL of your Mealie API instance
+  api_token: "MEALIE_API_TOKEN"         # Mealie API token for authentication
+
+openai:
+  api_key: "OPEN_AI_API_KEY"
+
+#Flask App Config
+flask:
+  host: "0.0.0.0"
+  port: 5000
+
+paths:
+  shopping_script: "path/to/shopping/cript"
+  drink_script: "path/to/drink/script"
+  pantry_script: "path/to/pantry/label/script"
+  venv_python: "path/to/venv/python"    #e.g. /home/$USER/.envs/bin/python
+
+payload:
+  expected: "print shopping list"
