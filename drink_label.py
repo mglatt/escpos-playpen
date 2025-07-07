@@ -1,28 +1,16 @@
 import yaml
-import reportlab
 from escpos.printer import Usb
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import mm
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import Paragraph, Spacer, SimpleDocTemplate
-from reportlab.lib.enums import TA_LEFT
-from pdf2image import convert_from_path
 import os
 import logging
-import tempfile
-from typing import Optional
-import json  # Ensure this import is present
-import sys  # For command-line arguments
-
-# --- Font Registration Imports ---
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+import json
+import sys
+import usb.util
+import usb.core
+import time
+from datetime import datetime
 
 # --- Constants ---
 CONFIG_FILE_PATH = 'config.yaml'
-PDF_FONT = "CustomReceiptFont"
-DEFAULT_FONT = "Helvetica"
-IMAGE_DPI = 200
 
 # --- Logging Setup ---
 root = logging.getLogger()
@@ -34,6 +22,41 @@ if not root.handlers:
     root.addHandler(sh)
 logger = logging.getLogger(__name__)
 
+# --- Printer Detection Functions ---
+def getPrinterWithSerial(serial):
+    """Returns a custom match function for finding a printer with a specific serial number."""
+    def isPrinter(dev):
+        try:
+            hasDeviceClass = dev.bDeviceClass == 0
+            if not hasDeviceClass:
+                for cfg in dev:
+                    if usb.util.find_descriptor(cfg, bInterfaceClass=0) is not None:
+                        hasDeviceClass = True
+            
+            if not hasDeviceClass:
+                return False
+
+            serialNumber = usb.util.get_string(dev, dev.iSerialNumber)
+            if serialNumber is None:
+                return False
+
+            return serialNumber == serial
+        except:
+            return False
+    return isPrinter
+
+def initialize_printer_by_serial(vendor_id: int, product_id: int, serial_number: str, profile: str, timeout: int = 60):
+    """Initialize a printer using its serial number."""
+    try:
+        usb_args = {}
+        usb_args['custom_match'] = getPrinterWithSerial(serial_number)
+        printer = Usb(vendor_id, product_id, usb_args, timeout=timeout, profile=profile)
+        logger.info(f"Successfully initialized printer with serial number: {serial_number}")
+        return printer
+    except Exception as e:
+        logger.error(f"Failed to initialize printer with serial number {serial_number}: {e}")
+        return None
+
 # --- Configuration Loading and Validation ---
 def load_config(config_file_path: str) -> dict:
     """Loads and validates configuration from YAML file."""
@@ -44,193 +67,150 @@ def load_config(config_file_path: str) -> dict:
             config = yaml.safe_load(yaml_file)
         if not isinstance(config, dict):
             raise ValueError("Invalid YAML configuration format: root must be a dictionary.")
-        validate_config(config)
         return config
     except yaml.YAMLError as e:
         raise ValueError(f"YAML configuration error in {config_file_path}: {e}")
 
-def validate_config(cfg: dict):
-    """Validates the configuration dictionary."""
-    if not isinstance(cfg, dict):
-        raise ValueError("Configuration must be a dictionary.")
-    _validate_section(cfg, 'printer', ['vendor_id', 'product_id', 'max_width'])
-    _validate_section(cfg, 'fonts', ['custom_font_path_drink', 'font_size'])
-    _validate_section(cfg, 'pdf_style', [
-        'margin_left', 'margin_right', 'margin_top',
-        'line_height_ratio', 'paragraph_spacing', 'ingredient_indent'
-    ])
-    _validate_section(cfg, 'safety_margins', ['percentage', 'minimum'])
-    _validate_section(cfg, 'page_dimensions', ['width'])
+def get_printer_for_script(script_name: str, config: dict):
+    """Returns the printer configuration for a given script name."""
+    for printer_role, printer_config in config['printers'].items():
+        if printer_role == 'shared':
+            continue
+        if 'scripts' in printer_config and script_name in printer_config['scripts']:
+            return printer_config
+    
+    logger.error(f"No printer configured for script: {script_name}")
+    return None
 
-def _validate_section(cfg: dict, section_name: str, required_options: list):
-    """Validates a specific section in the configuration."""
-    if not isinstance(cfg.get(section_name), dict):
-        raise ValueError(f"Section '{section_name}' must be a dictionary.")
-    for opt in required_options:
-        if opt not in cfg[section_name]:
-            raise ValueError(f"Missing option '{opt}' in '{section_name}' section")
-
-# --- Font Registration ---
-def register_custom_font(font_path: str, font_name: str, font_size: int, line_height_ratio: float) -> str:
-    """
-    Registers a TrueType font with ReportLab.
-    Returns the font name to use (custom or default).
-    """
-    if not font_path:
-        logger.warning("Custom font path is not configured in config.yaml. Using default font.")
-        return DEFAULT_FONT
-
-    if not os.path.exists(font_path):
-        logger.error(f"Custom font file not found at: {font_path}. Using default font.")
-        return DEFAULT_FONT
-
+def print_stylized_drink_label(printer: Usb, order: dict):
+    """Prints a visually appealing drink label using only text and ESC/POS commands."""
+    if not printer:
+        logger.warning("Printer not initialized, cannot print")
+        return
+    
     try:
-        pdfmetrics.registerFont(TTFont(font_name, font_path))
-        calculated_line_height = font_size * line_height_ratio
-        logger.info(f"Custom font '{font_name}' registered from '{font_path}', font size: {font_size}pt, "
-                   f"line height ratio: {line_height_ratio}, calculated line height (per style): {calculated_line_height:.2f}pt.")
-        return font_name
-    except Exception as e:
-        logger.error(f"Error registering custom font '{font_name}' from '{font_path}': {e}. Using default font.")
-        return DEFAULT_FONT
-
-def create_drink_label(order: dict, config: dict) -> str:
-    """Creates a PDF label for a drink order matching the sample receipt format."""
-    font_path = config['fonts']['custom_font_path_drink']
-    font_name = "CustomReceiptFont"
-    font_size = config['fonts']['font_size']
-    line_height_ratio = config['pdf_style']['line_height_ratio']
-    padding = config['pdf_style']['padding'] * mm
-
-    # Register the custom font or fallback to default
-    active_font = register_custom_font(font_path, font_name, font_size, line_height_ratio)
-
-    # Create a temporary PDF file
-    pdf_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-    pdf_path = pdf_file.name
-    pdf_file.close()
-
-    # Page dimensions
-    page_width = config['page_dimensions']['width'] * mm
-    page_height = 80 * mm
-
-    # Margins
-    left_margin = config['pdf_style']['margin_left'] * mm
-    right_margin = page_width - (config['pdf_style']['margin_right'] * mm)
-
-    # Create the PDF canvas
-    c = canvas.Canvas(pdf_path, pagesize=(page_width, page_height))
-
-    # Starting y position (from top of page)
-    y = page_height - padding
-
-    # Add customer name (large)
-    c.setFont(active_font, font_size * 1.2)
-    c.drawString(left_margin, y, order.get('customer_name', ''))
-
-    # Draw first separator line (thicker)
-    y -= padding + 5
-    c.setLineWidth(3.0)
-    c.line(left_margin, y, right_margin, y)
-    c.setLineWidth(1.0)
-
-    # Add date and time
-    y -= padding + 10
-    c.setFont(active_font, 12)
-
-    # Parse the datetime string
-    from datetime import datetime
-    date_obj = datetime.strptime(order['date_time'], "%B %d %Y %I:%M %p")
-
-    # Format date and time components
-    date_str = date_obj.strftime("%B %d, %Y")
-    time_str = date_obj.strftime("%I:%M %p")
-
-    # Draw date (left) and time (right)
-    c.drawString(left_margin, y, date_str)
-    time_width = c.stringWidth(time_str, active_font, 12)
-    c.drawString(right_margin - time_width, y, time_str)
-
-    # Draw second separator line
-    y -= padding
-    c.line(left_margin, y, right_margin, y)
-
-    # Add drink name with larger font and modifiers with consistent spacing
-    y -= padding + 15
-    line_spacing = 18
-
-    # Larger font for drink name
-    c.setFont(active_font, 18)
-    if 'drink_name' in order:
-        c.drawString(left_margin, y, order['drink_name'])
-        y -= line_spacing + 3
-
-    # Regular font for modifiers
-    c.setFont(active_font, 12)
-    if 'modifiers' in order:
-        for modifier in order['modifiers']:
-            c.drawString(left_margin, y, modifier)
-            y -= line_spacing
-
-    # Draw bottom separator line
-    y += line_spacing / 2
-    c.line(left_margin, y, right_margin, y)
-
-    c.save()
-    return pdf_path
-
-# --- Image Conversion and Resizing ---
-def convert_pdf_to_image(pdf_path: str):
-    """Converts PDF to PIL Image (first page only)."""
-    images = convert_from_path(pdf_path, dpi=IMAGE_DPI)
-    if not images:
-        raise ValueError(f"No images converted from PDF: {pdf_path}")
-    return images[0]
-
-def resize_image_to_width(image, max_width: int):
-    """Resizes image to max printer width."""
-    width = image.size[0]
-    if width > max_width:
-        new_height = int((max_width / width) * image.size[1])
-        resized_image = image.resize((max_width, new_height))
-        logger.info(f"Image resized from {width}px to {max_width}px width.")
-        return resized_image
-    return image
-
-# --- Printer Interaction ---
-def print_image_receipt(printer: Usb, image):
-    """Prints PIL Image on ESC/POS printer."""
-    if printer:
-        printer.image(image)
+        # IMPORTANT: Reset printer state completely at start (for TM-L90 compatibility)
+        printer._raw(b'\x1b@')  # Initialize printer (reset all settings)
+        time.sleep(0.2)
+        printer._raw(b'\x1b!\x00')  # Reset font/size
+        printer._raw(b'\x1dB\x00')  # Turn off inverted
+        printer._raw(b'\x1bE\x00')  # Turn off bold
+        printer._raw(b'\x1b-\x00')  # Turn off underline
+        time.sleep(0.2)
+        
+        # Top decorative header with coffee theme
+        printer.set(width=1, height=1, align='left')
+        printer.text('    * * *  DRINK ORDER  * * *\n')
+        printer.text('▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n')
+        printer.text('\n')
+        
+        # Customer name - use inverted + double both with timing for TM-L90 compatibility
+        customer_name = order.get('customer_name', 'Customer')
+        printer.text('    ')  # Indentation
+        
+        # Add delay for TM-L90 compatibility
+        time.sleep(0.1)
+        printer._raw(b'\x1dB\x01')  # Inverted (white on black) on
+        time.sleep(0.1) 
+        printer._raw(b'\x1b!\x30')  # ESC ! 48 (double width + double height)
+        time.sleep(0.1)
+        printer.text(customer_name)
+        time.sleep(0.1)
+        printer._raw(b'\x1b!\x00')  # Reset size first
+        time.sleep(0.1)
+        printer._raw(b'\x1dB\x00')  # Inverted off
+        printer.text('\n\n')
+        
+        # Decorative separator with dots
+        printer.text('. . . . . . . . . . . . . . . .\n\n')
+        
+        # Date and time formatting (normal size)
+        try:
+            date_obj = datetime.strptime(order['date_time'], "%B %d %Y %I:%M %p")
+            date_str = date_obj.strftime("%b %d, %Y")
+            time_str = date_obj.strftime("%I:%M %p")
+            
+            date_time_line = f"{date_str:<16} {time_str:>15}"
+            printer.text(date_time_line + '\n')
+        except Exception as e:
+            logger.warning(f"Date formatting error: {e}")
+            printer.text("Date/Time error\n")
+        
+        # Double line separator
+        printer.text('\n')
+        printer.text('═' * 32 + '\n')
+        printer.text('═' * 32 + '\n')
+        printer.text('\n')
+        
+        # Drink name - use direct ESC/POS for double width
+        drink_name = order.get('drink_name', 'Drink')
+        printer.text('    ')  # Indentation
+        printer._raw(b'\x1b!\x20')  # ESC ! 32 (double width only)
+        printer.text(drink_name)
+        printer._raw(b'\x1b!\x00')  # ESC ! 0 (reset to normal)
+        printer.text('\n\n')
+        
+        # Modifiers with basic bullet points
+        if 'modifiers' in order and order['modifiers']:
+            for modifier in order['modifiers']:
+                mod_text = modifier[:28]  # Truncate if too long
+                printer.text(f'    + {mod_text}\n')
+        
+        # Simple bottom line
+        printer.text('\n')
+        printer.text('▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n')
+        
+        # IMPORTANT: Final cleanup and proper cut (for TM-L90)
+        printer._raw(b'\x1b!\x00')  # Reset font/size
+        printer._raw(b'\x1dB\x00')  # Turn off inverted
+        time.sleep(0.3)  # Wait before cutting
+        printer.text('\n\n')  # Extra spacing
         printer.cut()
-        logger.info("Receipt page printed.")
-    else:
-        logger.warning("Printer not initialized, cannot print receipt page.")
+        time.sleep(0.3)  # Wait after cutting
+        
+        logger.info("Stylized text drink label printed successfully")
+        
+    except Exception as e:
+        logger.error(f"Error printing stylized label: {e}")
+        # Ultra-simple fallback
+        printer.text("DRINK LABEL\n")
+        printer.text("=" * 20 + "\n")
+        printer.text(f"{order.get('customer_name', 'Customer')}\n")
+        printer.text(f"{order.get('drink_name', 'Drink')}\n")
+        printer.text("=" * 20 + "\n")
+        printer.cut()
 
-# --- Drink Order Processing ---
 def process_drink_order(order_json: str, config: dict):
-    """Processes a drink order JSON payload, generates a PDF label, converts it to an image, and prints it."""
+    """Processes a drink order using stylized text formatting."""
     try:
         # Parse the JSON payload
         order = json.loads(order_json)
 
-        # Generate the PDF label
-        pdf_path = create_drink_label(order, config)
-        logger.info(f"PDF label generated at: {pdf_path}")
+        # Get printer configuration for drinks script
+        vendor_id = int(config['printers']['shared']['vendor_id'], 16)
+        product_id = int(config['printers']['shared']['product_id'], 16)
+        printer_config = get_printer_for_script('drinks', config)
+        
+        if not printer_config:
+            logger.error("No printer configured for drinks script")
+            return
+        
+        logger.info(f"Using {printer_config['name']} for drinks (Serial: {printer_config['serial_number']})")
 
-        # Convert the PDF to an image
-        image = convert_pdf_to_image(pdf_path)
-        logger.info("PDF converted to image.")
-
-        # Resize the image to fit the printer width
-        max_width = config['printer']['max_width']
-        resized_image = resize_image_to_width(image, max_width)
-        logger.info(f"Image resized to fit printer width: {max_width}px")
-
-        # Print the image
-        printer = Usb(int(config['printer']['vendor_id'], 16), int(config['printer']['product_id'], 16), profile="TM-L90")
-        print_image_receipt(printer, resized_image)
-        logger.info("Drink label printed successfully.")
+        # Initialize the printer
+        printer = initialize_printer_by_serial(
+            vendor_id, 
+            product_id, 
+            printer_config['serial_number'], 
+            printer_config['profile']
+        )
+        
+        if printer:
+            print_stylized_drink_label(printer, order)
+            printer.close()
+            logger.info("Print job completed successfully")
+        else:
+            logger.error(f"Failed to initialize printer")
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON payload: {e}")
@@ -239,18 +219,14 @@ def process_drink_order(order_json: str, config: dict):
 
 # --- Main Execution ---
 if __name__ == "__main__":
-    printer = None
     try:
         config = load_config(CONFIG_FILE_PATH)
 
-        # Get the JSON payload from the command line arguments
         if len(sys.argv) < 2:
-            logger.error("No JSON payload provided.")
+            logger.error("Usage: python drink_label.py '{\"customer_name\": \"Chessie\", \"date_time\": \"July 06 2025 12:40 PM\", \"drink_name\": \"Large Coffee\", \"modifiers\": [\"Extra Shot\", \"Oat Milk\"]}'")
             exit(1)
 
         order_json = sys.argv[1]
-
-        # Process the drink order
         process_drink_order(order_json, config)
 
     except FileNotFoundError as e:
@@ -262,7 +238,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Main application error: {e}", exc_info=True)
         exit(1)
-    finally:
-        if 'printer' in locals() and printer:
-            printer.close()
-            logger.info("Printer connection closed.")
