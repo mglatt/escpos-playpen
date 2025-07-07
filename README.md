@@ -1,4 +1,4 @@
-# Thermal Printer System
+# ESCPOS-based Thermal Printing Experiments
 
 A Python-based thermal printing system that provides REST API endpoints for printing shopping lists, drink labels, and pantry labels using EPSON thermal printers. The system integrates with Mealie for shopping list management and OpenAI for intelligent categorization.
 
