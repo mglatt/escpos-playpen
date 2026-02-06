@@ -1,0 +1,118 @@
+alias: Print Mealie Shopping List
+description: >-
+  Fetch Mealie shopping list, categorize with OpenAI, and print to receipt
+  printer
+icon: mdi:printer-pos
+mode: single
+fields:
+  shopping_list_entity:
+    name: Shopping List Entity
+    description: The Mealie todo entity to print
+    required: false
+    default: todo.mealie_shopping_list
+    selector:
+      entity:
+        domain: todo
+  openai_agent_id:
+    name: OpenAI Agent ID
+    description: OpenAI conversation agent ID (defaults to conversation.chatgpt)
+    required: false
+    default: conversation.chatgpt
+    selector:
+      text: null
+  printer_device_id:
+    name: Printer Device ID
+    description: Target printer device ID (optional - uses all printers if not specified)
+    required: false
+    selector:
+      device:
+        integration: escpos_printer
+variables:
+  list_entity: "{{ shopping_list_entity | default('todo.mealie_shopping_list') }}"
+  agent_id: "{{ openai_agent_id | default('conversation.chatgpt') }}"
+sequence:
+  - alias: Fetch shopping list items from Mealie
+    target:
+      entity_id: "{{ list_entity }}"
+    data:
+      status: needs_action
+    response_variable: shopping_items
+    action: todo.get_items
+  - alias: Check for empty list
+    if:
+      - condition: template
+        value_template: "{{ shopping_items[list_entity]['items'] | length == 0 }}"
+    then:
+      - alias: Print empty list message
+        data:
+          text: |
+            ================================
+                 SHOPPING LIST EMPTY
+            ================================
+
+            No items on your shopping list!
+
+            Add items in Mealie to print.
+          align: center
+          feed: 3
+          cut: full
+        action: escpos_printer.print_text_utf8
+      - stop: Shopping list is empty
+  - alias: Prepare item list for OpenAI
+    variables:
+      items_text: >-
+        {% set items = shopping_items[list_entity]['items'] %} {% for item in
+        items %} - {{ item.summary }} {% endfor %}
+      item_count: "{{ shopping_items[list_entity]['items'] | length }}"
+  - alias: Build categorization prompt
+    variables:
+      categorization_prompt: >-
+        Categorize the following shopping list items by grocery store section.
+        Return ONLY valid JSON with no markdown formatting, no code blocks, no
+        explanation.
+
+        Use this exact JSON structure: {"categories": [{"name": "Section Name",
+        "items": ["item1", "item2"]}]}
+
+        Use these category names when applicable: - Produce - Dairy & Eggs -
+        Meat & Seafood - Bakery - Deli - Frozen - Pantry & Canned Goods - Snacks
+        & Beverages - Condiments & Sauces - Household & Cleaning - Personal Care
+        - Other
+
+        Shopping list items: {{ items_text }}
+  - alias: Categorize items with OpenAI
+    data:
+      agent_id: "{{ agent_id }}"
+      text: "{{ categorization_prompt }}"
+    response_variable: ai_response
+    action: conversation.process
+  - alias: Parse categorized response
+    variables:
+      parsed_response: >-
+        {% set response_text = ai_response.response.speech.plain.speech %} {%
+        set clean_text = response_text | regex_replace('```json\\s*', '') |
+        regex_replace('```\\s*', '') | trim %} {{ clean_text | from_json }}
+  - alias: Build and print receipt
+    variables:
+      full_receipt: >-
+        {% set ns = namespace(text='') %} {% set ns.text = '        SHOPPING
+        LIST\n' %} {% set ns.text = ns.text ~ '   ' ~ now().strftime('%B %d, %Y
+        at %I:%M %p') ~ '\n' %} {% set ns.text = ns.text ~ '          ' ~
+        item_count ~ ' items\n' %} {% set ns.text = ns.text ~
+        '================================\n' %} {% for category in
+        parsed_response.categories %} {% set ns.text = ns.text ~ '\n' ~
+        category.name | upper ~ '\n' %} {% set ns.text = ns.text ~
+        '--------------------------------\n' %} {% for item in category['items']
+        %} {% set ns.text = ns.text ~ '[ ] ' ~ item ~ '\n' %} {% endfor %} {%
+        endfor %} {% set ns.text = ns.text ~
+        '\n================================\n' %} {% set ns.text = ns.text ~
+        '     Happy Shopping!\n' %} {% set ns.text = ns.text ~
+        '================================' %} {{ ns.text }}
+  - alias: Print receipt
+    data:
+      text: "{{ full_receipt }}"
+      align: left
+      feed: 3
+      cut: full
+      device_id: "{{ printer_device_id | default(omit) }}"
+    action: escpos_printer.print_text_utf8
